@@ -151,6 +151,15 @@ void *SubscriptionPoller::pollingThreadFunc(void *parm)
 
         log_debug("Polling process finished, hibernating...\n");
         pthread_mutex_lock(&thisObj->_pollMutex);
+
+        {
+            ReadGuard __readGuard(thisObj->rwLock);
+            if (thisObj->pollingList.size() != copiedList.size()) {
+                pthread_mutex_unlock(&thisObj->_pollMutex);
+                continue;
+            }
+        }
+
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_sec += thisObj->_pollingInterval / 1000;
