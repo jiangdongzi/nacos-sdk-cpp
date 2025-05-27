@@ -112,6 +112,15 @@ void *SubscriptionPoller::pollingThreadFunc(void *parm)
         if (copiedList.empty()) {
             log_debug("PollingList is empty, waiting for new items...\n");
             pthread_mutex_lock(&thisObj->_pollMutex);
+
+            {
+                ReadGuard __readGuard(thisObj->rwLock);
+                if (!thisObj->pollingList.empty()) {
+                    pthread_mutex_unlock(&thisObj->_pollMutex);
+                    continue;
+                }
+            }
+
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += thisObj->_pollingInterval / 1000;
