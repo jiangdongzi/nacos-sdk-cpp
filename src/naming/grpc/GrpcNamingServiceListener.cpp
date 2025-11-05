@@ -7,6 +7,8 @@
 
 #include "grpcpp/grpcpp.h"
 #include "src/json/rapidjson/document.h"
+#include "src/json/rapidjson/stringbuffer.h"
+#include "src/json/rapidjson/writer.h"
 
 #include "NacosExceptions.h"
 #include "constant/PropertyKeyConst.h"
@@ -151,6 +153,19 @@ bool GrpcNamingServiceListener::establishConnection() {
 
     for (const auto &server : servers) {
         std::string ip = server.getIp();
+        bool useTls = false;
+        const std::string httpPrefix = "http://";
+        const std::string httpsPrefix = "https://";
+        if (ip.compare(0, httpPrefix.size(), httpPrefix) == 0) {
+            ip = ip.substr(httpPrefix.size());
+        } else if (ip.compare(0, httpsPrefix.size(), httpsPrefix) == 0) {
+            ip = ip.substr(httpsPrefix.size());
+            useTls = true;
+        }
+        if (!ip.empty() && ip.back() == '/') {
+            ip.pop_back();
+        }
+
         int httpPort = server.getPort();
         if (httpPort <= 0) {
             httpPort = DEFAULT_HTTP_PORT;
@@ -159,6 +174,10 @@ bool GrpcNamingServiceListener::establishConnection() {
         std::ostringstream oss;
         oss << ip << ":" << grpcPort;
         std::string address = oss.str();
+
+        if (useTls) {
+            log_warn("[gRPC] TLS is not configured, using insecure channel for %s\n", address.c_str());
+        }
 
         log_info("[gRPC] dialing %s\n", address.c_str());
 
@@ -229,6 +248,27 @@ bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &
         return false;
     }
     log_debug("[gRPC] subscribe response: %s\n", response.c_str());
+
+    rapidjson::Document doc;
+    doc.Parse(response.c_str());
+    if (subscribeFlag && doc.IsObject() && doc.HasMember("success") && doc["success"].IsBool() && doc["success"].GetBool()) {
+        std::string serviceInfoJson;
+        if (doc.HasMember("serviceInfo")) {
+            const rapidjson::Value &svc = doc["serviceInfo"];
+            if (svc.IsString()) {
+                serviceInfoJson = svc.GetString();
+            } else {
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                svc.Accept(writer);
+                serviceInfoJson = buffer.GetString();
+            }
+        }
+        if (!serviceInfoJson.empty()) {
+            processServiceInfoJson(serviceInfoJson);
+        }
+        fetchServiceSnapshot(key.serviceName, key.groupName, key.clusters);
+    }
     return true;
 }
 
@@ -292,7 +332,65 @@ bool GrpcNamingServiceListener::sendConnectionSetup(const std::string &connectio
     body << "\"clientAbilities\":{}";
     body << "}";
 
-    return sendStreamAck("ConnectionSetupRequest", body.str());
+    bool ok = sendStreamAck("ConnectionSetupRequest", body.str());
+    if (ok) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return ok;
+}
+
+
+void GrpcNamingServiceListener::fetchServiceSnapshot(const NacosString &serviceName, const NacosString &groupName, const NacosString &clusters) {
+    std::ostringstream body;
+    body << "{\"requestId\":\"" << makeRequestId() << "\",";
+    body << "\"module\":\"naming\",";
+    body << "\"namespace\":\"" << _objectConfigData->_serverListManager->getNamespace() << "\",";
+    body << "\"serviceName\":\"" << serviceName << "\",";
+    body << "\"groupName\":\"" << groupName << "\",";
+    body << "\"cluster\":\"" << clusters << "\",";
+    body << "\"healthyOnly\":false,\"udpPort\":0}";
+
+    std::string response;
+    if (!callUnary("ServiceQueryRequest", body.str(), response)) {
+        log_warn("[gRPC] service query request failed");
+        return;
+    }
+
+    log_debug("[gRPC] service query response: %s", response.c_str());
+    rapidjson::Document doc;
+    doc.Parse(response.c_str());
+    if (!doc.IsObject() || !doc.HasMember("success") || !doc["success"].IsBool() || !doc["success"].GetBool()) {
+        log_warn("[gRPC] service query failed: %s", response.c_str());
+        return;
+    }
+
+    if (doc.HasMember("serviceInfo")) {
+        std::string snapshotJson;
+        const rapidjson::Value &svc = doc["serviceInfo"];
+        if (svc.IsString()) {
+            snapshotJson = svc.GetString();
+        } else {
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            svc.Accept(writer);
+            snapshotJson = buffer.GetString();
+        }
+        if (!snapshotJson.empty()) {
+            processServiceInfoJson(snapshotJson);
+        }
+    }
+}
+
+void GrpcNamingServiceListener::processServiceInfoJson(const std::string &serviceInfoJson) {
+    if (serviceInfoJson.empty()) {
+        return;
+    }
+    try {
+        log_debug("[gRPC] apply service info: %s", serviceInfoJson.c_str());
+        _objectConfigData->_hostReactor->processServiceJson(serviceInfoJson.c_str());
+    } catch (NacosException &e) {
+        log_warn("[gRPC] processServiceJson failed: %s", e.what());
+    }
 }
 
 void GrpcNamingServiceListener::handlePayload(const ::Payload &payload) {
@@ -302,18 +400,37 @@ void GrpcNamingServiceListener::handlePayload(const ::Payload &payload) {
     log_debug("[gRPC] incoming payload type=%s body=%s\n", type.c_str(), rawBody.c_str());
 
     if (type == "NotifySubscriberRequest") {
-        try {
-            _objectConfigData->_hostReactor->processServiceJson(rawBody);
-        } catch (NacosException &e) {
-            log_warn("[gRPC] processServiceJson failed: %s\n", e.what());
-        }
-
         rapidjson::Document doc;
         doc.Parse(rawBody.c_str());
+
         std::string requestId;
         if (doc.IsObject() && doc.HasMember("requestId") && doc["requestId"].IsString()) {
             requestId = doc["requestId"].GetString();
         }
+
+        std::string serviceInfoJson;
+        if (doc.IsObject() && doc.HasMember("serviceInfo")) {
+            const rapidjson::Value &svc = doc["serviceInfo"];
+            if (svc.IsString()) {
+                serviceInfoJson = svc.GetString();
+            } else {
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                svc.Accept(writer);
+                serviceInfoJson = buffer.GetString();
+            }
+        }
+
+        if (!serviceInfoJson.empty()) {
+            try {
+                _objectConfigData->_hostReactor->processServiceJson(serviceInfoJson.c_str());
+            } catch (NacosException &e) {
+                log_warn("[gRPC] processServiceJson failed: %s\n", e.what());
+            }
+        } else {
+            log_warn("[gRPC] NotifySubscriberRequest missing serviceInfo payload\n");
+        }
+
         std::ostringstream ack;
         ack << "{\"resultCode\":200,\"errorCode\":0,\"success\":true,\"message\":\"\",\"requestId\":\""
             << requestId << "\"}";
@@ -350,6 +467,9 @@ bool GrpcNamingServiceListener::sendStreamAck(const std::string &type, const std
     (*metadata->mutable_headers())["app"] = appName.c_str();
     (*metadata->mutable_headers())["Client-Version"] = UtilAndComs::VERSION.c_str();
     (*metadata->mutable_headers())["User-Agent"] = UtilAndComs::VERSION.c_str();
+    if (!state->connectionId.empty()) {
+        (*metadata->mutable_headers())["connectionId"] = state->connectionId;
+    }
 
     payload.mutable_body()->set_value(body);
     payload.mutable_body()->set_type_url("");
@@ -371,6 +491,9 @@ bool GrpcNamingServiceListener::callUnary(const std::string &type, const std::st
     (*metadata->mutable_headers())["app"] = appName.c_str();
     (*metadata->mutable_headers())["Client-Version"] = UtilAndComs::VERSION.c_str();
     (*metadata->mutable_headers())["User-Agent"] = UtilAndComs::VERSION.c_str();
+    if (!state->connectionId.empty()) {
+        (*metadata->mutable_headers())["connectionId"] = state->connectionId;
+    }
     requestPayload.mutable_body()->set_value(body);
     requestPayload.mutable_body()->set_type_url("");
 

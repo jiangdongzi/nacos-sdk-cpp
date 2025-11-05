@@ -29,6 +29,11 @@ int main() {
     //Here we set it to 5000 to see the output more quick
     props[PropertyKeyConst::SUBSCRIPTION_POLL_INTERVAL] = "5000";
     props[PropertyKeyConst::UDP_RECEIVER_PORT] = "0";
+    props[PropertyKeyConst::LOG_LEVEL] = "DEBUG";
+    props[PropertyKeyConst::LOG_PATH] = "./logs";
+        props[PropertyKeyConst::LOG_PATH] = "./logs";
+    props[PropertyKeyConst::LOG_LEVEL] = "DEBUG";
+
     INacosServiceFactory *factory = NacosFactoryFactory::getNacosFactory(props);
     ResourceGuard <INacosServiceFactory> _guardFactory(factory);
     NamingService *n = factory->CreateNamingService();
@@ -38,13 +43,13 @@ int main() {
     cout << "Press any key to register services" << endl;
     getchar();
 
-    n->registerInstance("ss", "127.0.0.1", 33);
-    n->registerInstance("ss", "127.0.0.1", 34);
+    n->registerInstance("ss", "137.0.0.1", 33);
+    n->registerInstance("ss", "137.0.0.1", 34);
     cout << "Press any key to deregister services" << endl;
     getchar();
 
-    n->deregisterInstance("ss", "127.0.0.1", 33);
-    n->deregisterInstance("ss", "127.0.0.1", 34);
+    n->deregisterInstance("ss", "137.0.0.1", 33);
+    n->deregisterInstance("ss", "137.0.0.1", 34);
     cout << "All instances Unregistered, press any key to finish testing" << endl;
     getchar();
 

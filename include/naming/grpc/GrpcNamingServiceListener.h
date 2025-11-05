@@ -63,6 +63,8 @@ private:
     bool sendStreamAck(const std::string &type, const std::string &body);
 
     bool callUnary(const std::string &type, const std::string &body, std::string &responseBody);
+    void processServiceInfoJson(const std::string &serviceInfoJson);
+    void fetchServiceSnapshot(const NacosString &serviceName, const NacosString &groupName, const NacosString &clusters);
 
     NacosString resolveAppName() const;
     struct GrpcState;

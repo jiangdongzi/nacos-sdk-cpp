@@ -171,7 +171,7 @@ UdpNamingServiceListener::UdpNamingServiceListener(ObjectConfigData *objectConfi
     _objectConfigData = objectConfigData;
     int udp_port = initializeUdpListener();
     // udpReceiverPort = atoi(_objectConfigData->_appConfigManager->get(PropertyKeyConst::UDP_RECEIVER_PORT).c_str());
-    objectConfigData->_appConfigManager->set(PropertyKeyConst::UDP_RECEIVER_PORT, NacosStringOps::valueOf(udp_port));
+    objectConfigData->_appConfigManager->set(PropertyKeyConst::UDP_RECEIVER_PORT, NacosStringOps::valueOf(0));
     log_debug("udpReceiverPort is %d\n", udpReceiverPort);
     _listenerThread = new Thread(objectConfigData->name + "UDPListener", listenerThreadFunc, (void*)this);
 }
