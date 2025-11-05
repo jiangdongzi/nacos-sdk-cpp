@@ -30,6 +30,13 @@ make
 
 **这些例子你都能在nacos-sdk-cpp/examples/找到**
 
+### gRPC 命名推送
+
+从此版本开始，C++ SDK 会自动通过 gRPC 与 Nacos 建立命名订阅通道。
+服务端推送 `NotifySubscriberRequest` 事件时会立即触发业务方注册的
+`EventListener::receiveNamingInfo` 回调，原有的 HTTP 轮询仍作为兜底。
+只需在编译环境中安装 gRPC/protobuf，运行时便会自动维护该连接。
+
 ## 将libnacos-cli集成到你的工程
 
 下面的例子说明了如何将库文件(.so) 集成到你的工程:

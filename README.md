@@ -35,6 +35,16 @@ One of the testcases will test endpoint functionality, so **you also need** to r
 
 **All these examples could be found in nacos-sdk-cpp/examples/**
 
+### gRPC naming channel
+
+Starting from this version the C++ SDK automatically opens a gRPC connection to
+Nacos for naming subscriptions. The gRPC stream delivers the same
+`NotifySubscriberRequest` events as the Go SDK, so callbacks registered through
+`NamingService::subscribe` receive updates immediately while the legacy HTTP
+poller remains as a fallback. No additional configuration is required—simply
+build the project with gRPC/protobuf installed and the runtime will handle the
+stream lifecycle for you.
+
 ## Integrate the library into your project
 
 Here is an example showing how to integrate the library(.so) into your project:

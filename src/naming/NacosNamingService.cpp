@@ -1,6 +1,7 @@
 #include "src/naming/NacosNamingService.h"
 #include "src/naming/subscribe/SubscriptionPoller.h"
 #include "src/naming/subscribe/UdpNamingServiceListener.h"
+#include "naming/grpc/GrpcNamingServiceListener.h"
 #include "src/naming/beat/BeatReactor.h"
 #include "src/utils/SequenceProvider.h"
 #include "src/utils/NamingUtils.h"
@@ -18,6 +19,9 @@ NacosNamingService::NacosNamingService(ObjectConfigData *objectConfigData) {
     _objectConfigData->_beatReactor->start();
     _objectConfigData->_subscriptionPoller->start();
     _objectConfigData->_udpNamingServiceListener->start();
+    if (_objectConfigData->_grpcNamingServiceListener != NULL) {
+        _objectConfigData->_grpcNamingServiceListener->start();
+    }
 
     if (_objectConfigData->_appConfigManager->nacosAuthEnabled()) {
         _objectConfigData->_securityManager->login();
@@ -246,6 +250,9 @@ void NacosNamingService::subscribe
         return;//The listener is already listening to the service specified, no need to add to the polling list
     }
     _objectConfigData->_subscriptionPoller->addPollItem(serviceName, groupName, clusterName);
+    if (_objectConfigData->_grpcNamingServiceListener != NULL) {
+        _objectConfigData->_grpcNamingServiceListener->subscribe(serviceName, groupName, clusterName);
+    }
 }
 
 
@@ -265,6 +272,9 @@ void NacosNamingService::unsubscribe(
     if (remainingListener == 0) {
         //Since there's no more listeners listening to this service, remove it from the polling list
         _objectConfigData->_subscriptionPoller->removePollItem(serviceName, groupName, clusterName);
+        if (_objectConfigData->_grpcNamingServiceListener != NULL) {
+            _objectConfigData->_grpcNamingServiceListener->unsubscribe(serviceName, groupName, clusterName);
+        }
     }
 }
 

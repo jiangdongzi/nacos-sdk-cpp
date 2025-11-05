@@ -22,6 +22,7 @@ class SecurityManager;
 class UdpNamingServiceListener;
 class HostReactor;
 class ConfigProxy;
+class GrpcNamingServiceListener;
 template <typename T>class SequenceProvider;
 
 enum FactoryType {
@@ -62,6 +63,7 @@ public:
     SecurityManager *_securityManager;
     UdpNamingServiceListener *_udpNamingServiceListener;
     HostReactor *_hostReactor;
+    GrpcNamingServiceListener *_grpcNamingServiceListener;
     SequenceProvider<int64_t> *_sequenceProvider;
     ConfigProxy *_configProxy;
 };

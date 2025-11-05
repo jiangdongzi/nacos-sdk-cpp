@@ -16,6 +16,7 @@
 #include "src/naming/subscribe/EventDispatcher.h"
 #include "src/naming/subscribe/SubscriptionPoller.h"
 #include "src/naming/subscribe/UdpNamingServiceListener.h"
+#include "naming/grpc/GrpcNamingServiceListener.h"
 #include "src/naming/subscribe/HostReactor.h"
 #include "src/security/SecurityManager.h"
 #include "src/utils/ConfigParserUtils.h"
@@ -109,6 +110,9 @@ NamingService *NacosServiceFactory::CreateNamingService() NACOS_THROW(NacosExcep
 
     UdpNamingServiceListener *udpNamingServiceListener = new UdpNamingServiceListener(objectConfigData);
     objectConfigData->_udpNamingServiceListener = udpNamingServiceListener;
+
+    GrpcNamingServiceListener *grpcNamingServiceListener = new GrpcNamingServiceListener(objectConfigData);
+    objectConfigData->_grpcNamingServiceListener = grpcNamingServiceListener;
 
     SubscriptionPoller *subscriptionPoller = new SubscriptionPoller(objectConfigData);
     objectConfigData->_subscriptionPoller = subscriptionPoller;

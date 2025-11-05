@@ -5,6 +5,7 @@
 #include "src/naming/subscribe/EventDispatcher.h"
 #include "src/naming/subscribe/SubscriptionPoller.h"
 #include "src/naming/subscribe/UdpNamingServiceListener.h"
+#include "naming/grpc/GrpcNamingServiceListener.h"
 #include "src/naming/subscribe/HostReactor.h"
 #include "src/listen/ClientWorker.h"
 #include "src/security/SecurityManager.h"
@@ -30,6 +31,7 @@ ObjectConfigData::ObjectConfigData(FactoryType theFactoryType) {
     _localSnapshotManager = NULL;
     _securityManager = NULL;
     _configProxy = NULL;
+    _grpcNamingServiceListener = NULL;
 }
 
 void ObjectConfigData::checkNamingService() NACOS_THROW(NacosException) {
@@ -47,7 +49,7 @@ void ObjectConfigData::checkNamingService() NACOS_THROW(NacosException) {
     NACOS_ASSERT(_appConfigManager != NULL);
     NACOS_ASSERT(_serverListManager != NULL);
     NACOS_ASSERT(_udpNamingServiceListener != NULL);
-    NACOS_ASSERT(_udpNamingServiceListener != NULL);
+    NACOS_ASSERT(_grpcNamingServiceListener != NULL);
     NACOS_ASSERT(_sequenceProvider != NULL);
 }
 
@@ -142,6 +144,10 @@ void ObjectConfigData::destroyNamingService() {
         _udpNamingServiceListener->stop();
     }
 
+    if (_grpcNamingServiceListener != NULL) {
+        _grpcNamingServiceListener->stop();
+    }
+
     if (_eventDispatcher != NULL) {
         _eventDispatcher->stop();
     }
@@ -174,6 +180,12 @@ void ObjectConfigData::destroyNamingService() {
     {
         delete _udpNamingServiceListener;
         _udpNamingServiceListener = NULL;
+    }
+
+    if (_grpcNamingServiceListener != NULL)
+    {
+        delete _grpcNamingServiceListener;
+        _grpcNamingServiceListener = NULL;
     }
 
     if (_eventDispatcher != NULL)
