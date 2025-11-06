@@ -69,6 +69,7 @@ private:
     NacosString resolveAppName() const;
     struct GrpcState;
     GrpcState *state;
+    std::string clientIp;
 };
 }
 

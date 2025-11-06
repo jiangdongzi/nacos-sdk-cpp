@@ -24,6 +24,7 @@
 #include "src/naming/subscribe/HostReactor.h"
 #include "src/server/NacosServerInfo.h"
 #include "src/server/ServerListManager.h"
+#include "src/utils/NetUtils.h"
 #include "src/utils/UuidUtils.h"
 
 namespace nacos {
@@ -57,6 +58,13 @@ inline std::string AnyJsonToString(const rapidjson::Value &val) {
 
 } // anonymous namespace
 
+static NacosString effectiveNamespace(ObjectConfigData *cfg) {
+    if (cfg == NULL || cfg->_serverListManager == NULL) return "public";
+    NacosString ns = cfg->_serverListManager->getNamespace();
+    if (ns.empty()) return "public";
+    return ns;
+}
+
 struct GrpcNamingServiceListener::GrpcState {
     std::shared_ptr<grpc::Channel> channel;
     std::unique_ptr<::Request::Stub> requestStub;
@@ -75,6 +83,15 @@ struct GrpcNamingServiceListener::GrpcState {
 GrpcNamingServiceListener::GrpcNamingServiceListener(ObjectConfigData *objectConfigData)
     : _objectConfigData(objectConfigData), running(false), connectionReady(false) {
     state = new GrpcState();
+    try {
+        clientIp = NetUtils::getHostIp().c_str();
+    } catch (NacosException &e) {
+        log_warn("[gRPC] failed to resolve local ip: %s, fallback to 127.0.0.1\n", e.what());
+        clientIp = "127.0.0.1";
+    }
+    if (clientIp.empty()) {
+        clientIp = "127.0.0.1";
+    }
 }
 
 GrpcNamingServiceListener::~GrpcNamingServiceListener() {
@@ -280,7 +297,7 @@ bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &
     const char moduleValue[] = "naming";
     addStringMember("module", moduleValue, sizeof(moduleValue) - 1);
 
-    const NacosString tenantNamespace = _objectConfigData->_serverListManager->getNamespace();
+    const NacosString tenantNamespace = effectiveNamespace(_objectConfigData);
     addStringMember("namespace", tenantNamespace.c_str(), tenantNamespace.size());
     addStringMember("serviceName", key.serviceName.c_str(), key.serviceName.size());
     addStringMember("groupName", key.groupName.c_str(), key.groupName.size());
@@ -354,7 +371,7 @@ bool GrpcNamingServiceListener::sendConnectionSetup(const std::string &connectio
         }
     }
 
-    NacosString tenant = _objectConfigData->_serverListManager->getNamespace();
+    NacosString tenant = effectiveNamespace(_objectConfigData);
 
     std::ostringstream labels;
     labels << "{\"module\":\"naming\"}";
@@ -380,7 +397,7 @@ void GrpcNamingServiceListener::fetchServiceSnapshot(const NacosString &serviceN
     std::ostringstream body;
     body << "{\"requestId\":\"" << makeRequestId() << "\",";
     body << "\"module\":\"naming\",";
-    body << "\"namespace\":\"" << _objectConfigData->_serverListManager->getNamespace() << "\",";
+    body << "\"namespace\":\"" << effectiveNamespace(_objectConfigData) << "\",";
     body << "\"serviceName\":\"" << serviceName << "\",";
     body << "\"groupName\":\"" << groupName << "\",";
     body << "\"cluster\":\"" << clusters << "\",";
@@ -410,6 +427,26 @@ void GrpcNamingServiceListener::processServiceInfoJson(const std::string &servic
         return;
     }
     try {
+        // Normalize gRPC serviceInfo (name/groupName are split) into SDK expected format
+        // where "name" should be "group@@service" to match JSON::JsonStr2ServiceInfo
+        rapidjson::Document d;
+        d.Parse(serviceInfoJson.c_str());
+        if (d.IsObject() && d.HasMember("name") && d.HasMember("groupName") && d["name"].IsString() && d["groupName"].IsString()) {
+            std::string svc = d["name"].GetString();
+            std::string grp = d["groupName"].GetString();
+            std::string grouped = grp + "@@" + svc;
+            rapidjson::Value v;
+            v.SetString(grouped.c_str(), static_cast<rapidjson::SizeType>(grouped.size()), d.GetAllocator());
+            d.RemoveMember("name");
+            d.AddMember(rapidjson::StringRef("name"), v, d.GetAllocator());
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            d.Accept(writer);
+            log_debug("[gRPC] apply service info (normalized): %s\n", buffer.GetString());
+            _objectConfigData->_hostReactor->processServiceJson(buffer.GetString());
+            return;
+        }
+
         log_debug("[gRPC] apply service info: %s\n", serviceInfoJson.c_str());
         _objectConfigData->_hostReactor->processServiceJson(serviceInfoJson.c_str());
     } catch (NacosException &e) {
@@ -469,7 +506,7 @@ bool GrpcNamingServiceListener::sendStreamAck(const std::string &type, const std
     ::Payload payload;
     auto *metadata = payload.mutable_metadata();
     metadata->set_type(type);
-    metadata->set_clientip("");
+    metadata->set_clientip(clientIp);
 
     NacosString appName = resolveAppName();
     (*metadata->mutable_headers())["app"] = appName.c_str();
@@ -494,7 +531,7 @@ bool GrpcNamingServiceListener::callUnary(const std::string &type, const std::st
     ::Payload requestPayload;
     auto *metadata = requestPayload.mutable_metadata();
     metadata->set_type(type);
-    metadata->set_clientip("");
+    metadata->set_clientip(clientIp);
     NacosString appName = resolveAppName();
     (*metadata->mutable_headers())["app"] = appName.c_str();
     (*metadata->mutable_headers())["Client-Version"] = UtilAndComs::VERSION.c_str();
