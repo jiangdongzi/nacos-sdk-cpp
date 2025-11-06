@@ -1,6 +1,7 @@
 #include "naming/grpc/GrpcNamingServiceListener.h"
 
 #include <chrono>
+#include <cstddef>
 #include <list>
 #include <sstream>
 #include <utility>
@@ -250,17 +251,31 @@ bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &
     // body << "\"clusters\":\"" << key.clusters << "\",";
     // body << "\"subscribe\":" << (subscribeFlag ? "true" : "false") << "}";
     //以上代码改为rapidjson
+    log_warn("ivvyjxj111 clusters:%s\n", key.clusters.c_str());
     rapidjson::Document request_doc;
     request_doc.SetObject();
-    rapidjson::Document::AllocatorType& allocator = request_doc.GetAllocator();
+    rapidjson::Document::AllocatorType &allocator = request_doc.GetAllocator();
 
-    request_doc.AddMember("requestId", makeRequestId(), allocator);
-    request_doc.AddMember("module", "naming", allocator);
-    request_doc.AddMember("namespace", _objectConfigData->_serverListManager->getNamespace(), allocator);
-    request_doc.AddMember("serviceName", key.serviceName, allocator);
-    request_doc.AddMember("groupName", key.groupName, allocator);
-    request_doc.AddMember("clusters", key.clusters, allocator);
-    request_doc.AddMember("subscribe", subscribeFlag, allocator);
+    auto addStringMember = [&](const char *name, const char *value, std::size_t length) {
+        rapidjson::Value stringValue;
+        stringValue.SetString(value, static_cast<rapidjson::SizeType>(length), allocator);
+        request_doc.AddMember(rapidjson::StringRef(name), stringValue, allocator);
+    };
+
+    const std::string requestId = makeRequestId();
+    addStringMember("requestId", requestId.c_str(), requestId.size());
+
+    const char moduleValue[] = "naming";
+    addStringMember("module", moduleValue, sizeof(moduleValue) - 1);
+
+    const NacosString tenantNamespace = "public";
+    // const NacosString tenantNamespace = _objectConfigData->_serverListManager->getNamespace();
+    log_warn("ivvyjxj111 namespace:%s\n", tenantNamespace.c_str());
+    addStringMember("namespace", tenantNamespace.c_str(), tenantNamespace.size());
+    addStringMember("serviceName", key.serviceName.c_str(), key.serviceName.size());
+    addStringMember("groupName", key.groupName.c_str(), key.groupName.size());
+    addStringMember("clusters", key.clusters.c_str(), key.clusters.size());
+    request_doc.AddMember(rapidjson::StringRef("subscribe"), subscribeFlag, allocator);
 
     std::string response;
     if (!callUnary("SubscribeServiceRequest", JsonToString(request_doc), response)) {

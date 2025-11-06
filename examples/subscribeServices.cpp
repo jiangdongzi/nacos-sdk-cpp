@@ -1,5 +1,7 @@
 #include <iostream>
 #include "Nacos.h"
+#include "NacosString.h"
+#include <list>
 #include <stdio.h>
 
 using namespace std;
@@ -33,13 +35,16 @@ int main() {
     props[PropertyKeyConst::LOG_PATH] = "./logs";
         props[PropertyKeyConst::LOG_PATH] = "./logs";
     props[PropertyKeyConst::LOG_LEVEL] = "DEBUG";
+    props["clusters"] = "DEFAULT";
 
     INacosServiceFactory *factory = NacosFactoryFactory::getNacosFactory(props);
     ResourceGuard <INacosServiceFactory> _guardFactory(factory);
     NamingService *n = factory->CreateNamingService();
     ResourceGuard <NamingService> _serviceFactory(n);
 
-    n->subscribe("ss", new MyServiceListener(1));
+    std::list<NacosString> clusters {"DEFAULT"};
+
+    n->subscribe("ss", clusters, new MyServiceListener(1));
     cout << "Press any key to register services" << endl;
     getchar();
 
