@@ -34,6 +34,8 @@ const int DEFAULT_HTTP_PORT = 8848;
 const int GRPC_PORT_OFFSET = 1000;     // Nacos default gRPC port = http + 1000
 const int UNARY_TIMEOUT_MS = 5000;     // 5s timeout for unary requests
 const int RECONNECT_DELAY_MS = 2000;   // 2s between reconnection attempts
+const int DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 3000; // 3s default health check timeout
+const int DEFAULT_KEEPALIVE_INTERVAL_MS = 5000;   // 5s default keepalive interval
 
 std::string makeRequestId() { return UuidUtils::generateUuid(); }
 
@@ -83,6 +85,26 @@ struct GrpcNamingServiceListener::GrpcState {
 GrpcNamingServiceListener::GrpcNamingServiceListener(ObjectConfigData *objectConfigData)
     : _objectConfigData(objectConfigData), running(false), connectionReady(false) {
     state = new GrpcState();
+    stopHealth.store(false);
+    healthRunning.store(false);
+    lastActiveMillis.store(0);
+    // defaults
+    keepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS;
+    healthTimeoutMs = DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
+    // read overrides
+    if (_objectConfigData && _objectConfigData->_appConfigManager) {
+        const NacosString &ka = _objectConfigData->_appConfigManager->get(PropertyKeyConst::GRPC_KEEPALIVE_INTERVAL);
+        if (!ka.empty()) {
+            int v = atoi(ka.c_str());
+            if (v > 0) keepaliveIntervalMs = v;
+        }
+        const NacosString &hto = _objectConfigData->_appConfigManager->get(PropertyKeyConst::GRPC_HEALTHCHECK_TIMEOUT);
+        if (!hto.empty()) {
+            int v = atoi(hto.c_str());
+            if (v > 0) healthTimeoutMs = v;
+        }
+    }
+    log_info("[gRPC] keepaliveIntervalMs=%d healthTimeoutMs=%d\n", keepaliveIntervalMs, healthTimeoutMs);
     try {
         clientIp = NetUtils::getHostIp().c_str();
     } catch (NacosException &e) {
@@ -104,6 +126,7 @@ void GrpcNamingServiceListener::start() {
         return;
     }
     workerThread = std::thread(&GrpcNamingServiceListener::run, this);
+    startHealthLoop();
 }
 
 void GrpcNamingServiceListener::stop() {
@@ -112,6 +135,7 @@ void GrpcNamingServiceListener::stop() {
     }
     connectionReady.store(false);
     closeStream();
+    stopHealthLoop();
     if (workerThread.joinable()) {
         workerThread.join();
     }
@@ -158,6 +182,7 @@ void GrpcNamingServiceListener::run() {
 
         connectionReady.store(true);
         resubscribeAll();
+        markActivity();
 
         while (running.load()) {
             ::Payload inbound;
@@ -388,6 +413,7 @@ bool GrpcNamingServiceListener::sendConnectionSetup(const std::string &connectio
     bool ok = sendStreamAck("ConnectionSetupRequest", body.str());
     if (ok) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        markActivity();
     }
     return ok;
 }
@@ -459,6 +485,7 @@ void GrpcNamingServiceListener::handlePayload(const ::Payload &payload) {
     const std::string &rawBody = payload.body().value();
 
     log_debug("[gRPC] incoming payload type=%s body=%s\n", type.c_str(), rawBody.c_str());
+    markActivity();
 
     if (type == "NotifySubscriberRequest") {
         rapidjson::Document doc;
@@ -557,11 +584,126 @@ bool GrpcNamingServiceListener::callUnary(const std::string &type, const std::st
     return true;
 }
 
+bool GrpcNamingServiceListener::callUnaryWithTimeout(const std::string &type, const std::string &body, std::string &responseBody, int timeoutMs) {
+    std::lock_guard<std::mutex> lock(state->unaryMutex);
+    if (!state->requestStub) {
+        return false;
+    }
+
+    ::Payload requestPayload;
+    auto *metadata = requestPayload.mutable_metadata();
+    metadata->set_type(type);
+    metadata->set_clientip(clientIp);
+    NacosString appName = resolveAppName();
+    (*metadata->mutable_headers())["app"] = appName.c_str();
+    (*metadata->mutable_headers())["Client-Version"] = UtilAndComs::VERSION.c_str();
+    (*metadata->mutable_headers())["User-Agent"] = UtilAndComs::VERSION.c_str();
+    if (!state->connectionId.empty()) {
+        (*metadata->mutable_headers())["connectionId"] = state->connectionId;
+    }
+    requestPayload.mutable_body()->set_value(body);
+    requestPayload.mutable_body()->set_type_url("");
+
+    ::Payload responsePayload;
+    grpc::ClientContext context;
+    auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(timeoutMs);
+    context.set_deadline(deadline);
+
+    grpc::Status status = state->requestStub->request(&context, requestPayload, &responsePayload);
+    if (!status.ok()) {
+        log_warn("[gRPC] unary call failed: code=%d message=%s\n", status.error_code(), status.error_message().c_str());
+        return false;
+    }
+
+    responseBody = responsePayload.body().value();
+    return true;
+}
+
 NacosString GrpcNamingServiceListener::resolveAppName() const {
     if (_objectConfigData->_appConfigManager == NULL) {
         return NacosString();
     }
     return _objectConfigData->_appConfigManager->get(PropertyKeyConst::APP_NAME);
+}
+
+void GrpcNamingServiceListener::startHealthLoop() {
+    if (healthRunning.exchange(true)) {
+        return;
+    }
+    stopHealth.store(false);
+    healthThread = std::thread(&GrpcNamingServiceListener::healthLoop, this);
+}
+
+void GrpcNamingServiceListener::stopHealthLoop() {
+    stopHealth.store(true);
+    healthCv.notify_all();
+    if (healthThread.joinable()) {
+        healthThread.join();
+    }
+    healthRunning.store(false);
+}
+
+void GrpcNamingServiceListener::healthLoop() {
+    std::unique_lock<std::mutex> lk(healthMutex);
+    while (!stopHealth.load()) {
+        if (healthCv.wait_for(lk, std::chrono::milliseconds(keepaliveIntervalMs), [this]{return stopHealth.load();})) {
+            break;
+        }
+        lk.unlock();
+        if (running.load() && connectionReady.load()) {
+            long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            long long last_ms = lastActivityMillis();
+            if (last_ms == 0 || now_ms - last_ms >= keepaliveIntervalMs) {
+                if (sendHealthCheck()) {
+                    markActivity();
+                } else {
+                    // trigger reconnect by canceling the stream context
+                    std::lock_guard<std::mutex> g(state->streamMutex);
+                    if (state->streamContext) {
+                        state->streamContext->TryCancel();
+                    }
+                }
+            }
+        }
+        lk.lock();
+    }
+}
+
+void GrpcNamingServiceListener::markActivity() {
+    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    lastActiveMillis.store(now_ms, std::memory_order_relaxed);
+}
+
+long long GrpcNamingServiceListener::lastActivityMillis() const {
+    return lastActiveMillis.load(std::memory_order_relaxed);
+}
+
+bool GrpcNamingServiceListener::sendHealthCheck() {
+    // HealthCheckRequest uses the same body as ServerCheck (module=internal)
+    std::ostringstream body;
+    body << "{\"requestId\":\"" << makeRequestId() << "\",\"module\":\"internal\"}";
+    std::string response;
+    bool ok = callUnaryWithTimeout("HealthCheckRequest", body.str(), response, healthTimeoutMs);
+    if (!ok) {
+        log_warn("[gRPC] health check unary failed\n");
+        return false;
+    }
+    // parse response and treat 3xx errorCode as OK (server not ready but channel healthy)
+    rapidjson::Document doc;
+    doc.Parse(response.c_str());
+    if (!doc.IsObject()) {
+        return false;
+    }
+    if (doc.HasMember("success") && doc["success"].IsBool() && doc["success"].GetBool()) {
+        return true;
+    }
+    if (doc.HasMember("errorCode") && doc["errorCode"].IsInt()) {
+        int errorCode = doc["errorCode"].GetInt();
+        if (errorCode >= 300 && errorCode < 400) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace nacos

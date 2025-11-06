@@ -6,6 +6,8 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <condition_variable>
+#include <chrono>
 
 #include "NacosString.h"
 #include "nacos_grpc_service.grpc.pb.h"
@@ -49,6 +51,14 @@ private:
     std::atomic<bool> running;
     std::atomic<bool> connectionReady;
     std::thread workerThread;
+    std::thread healthThread;
+    std::atomic<bool> stopHealth;
+    std::atomic<bool> healthRunning;
+    std::mutex healthMutex;
+    std::condition_variable healthCv;
+    std::atomic<long long> lastActiveMillis;
+    int keepaliveIntervalMs;
+    int healthTimeoutMs;
 
     void run();
     bool establishConnection();
@@ -63,6 +73,7 @@ private:
     bool sendStreamAck(const std::string &type, const std::string &body);
 
     bool callUnary(const std::string &type, const std::string &body, std::string &responseBody);
+    bool callUnaryWithTimeout(const std::string &type, const std::string &body, std::string &responseBody, int timeoutMs);
     void processServiceInfoJson(const std::string &serviceInfoJson);
     void fetchServiceSnapshot(const NacosString &serviceName, const NacosString &groupName, const NacosString &clusters);
 
@@ -70,6 +81,14 @@ private:
     struct GrpcState;
     GrpcState *state;
     std::string clientIp;
+
+    // Health check helpers (keepalive for gRPC port)
+    void startHealthLoop();
+    void stopHealthLoop();
+    void healthLoop();
+    void markActivity();
+    long long lastActivityMillis() const;
+    bool sendHealthCheck();
 };
 }
 

@@ -68,6 +68,11 @@ public:
 
     static const NacosString INSTANCE_ID_PREFIX;
 
+    // gRPC keepalive for naming stream (milliseconds)
+    static const NacosString GRPC_KEEPALIVE_INTERVAL;
+    // gRPC health check timeout (milliseconds)
+    static const NacosString GRPC_HEALTHCHECK_TIMEOUT;
+
     /*public static class SystemEnv {
 
         static const NacosString ALIBABA_ALIWARE_ENDPOINT_PORT = "ALIBABA_ALIWARE_ENDPOINT_PORT";
