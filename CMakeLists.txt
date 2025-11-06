@@ -113,6 +113,13 @@ target_link_libraries(nacos-cli PRIVATE ${NACOS_LINK_LIBS})
 target_link_libraries(nacos-cli-static PRIVATE ${NACOS_LINK_LIBS})
 target_link_libraries(nacos-cli.out PRIVATE ${NACOS_LINK_LIBS})
 
+add_executable(grpc-sub.out examples/grpc_subscribe_demo.cpp)
+target_link_libraries(grpc-sub.out PRIVATE nacos-cli-static ${NACOS_LINK_LIBS})
+if (TARGET nacos_grpc_proto)
+    add_dependencies(grpc-sub.out nacos_grpc_proto)
+    target_compile_options(grpc-sub.out PRIVATE ${GRPC_CFLAGS_OTHER})
+endif()
+
 if (EXISTS ${NACOS_PROTO_FILE})
     target_compile_options(nacos-cli PRIVATE ${GRPC_CFLAGS_OTHER})
     target_compile_options(nacos-cli-static PRIVATE ${GRPC_CFLAGS_OTHER})

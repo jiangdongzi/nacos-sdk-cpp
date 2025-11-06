@@ -1,3 +1,7 @@
+// gRPC naming listener: establishes a bi-directional stream with Nacos server
+// and sends unary subscribe/unsubscribe/query requests. Server pushes
+// NotifySubscriberRequest via stream, which are applied to HostReactor.
+
 #include "naming/grpc/GrpcNamingServiceListener.h"
 
 #include <chrono>
@@ -23,40 +27,53 @@
 #include "src/utils/UuidUtils.h"
 
 namespace nacos {
+
 namespace {
 const int DEFAULT_HTTP_PORT = 8848;
-const int GRPC_PORT_OFFSET = 1000;
-const int SERVER_CHECK_TIMEOUT_MS = 5000;
-const int UNARY_TIMEOUT_MS = 5000;
-const int RECONNECT_DELAY_MS = 2000;
+const int GRPC_PORT_OFFSET = 1000;     // Nacos default gRPC port = http + 1000
+const int UNARY_TIMEOUT_MS = 5000;     // 5s timeout for unary requests
+const int RECONNECT_DELAY_MS = 2000;   // 2s between reconnection attempts
 
-std::string makeRequestId() {
-    return UuidUtils::generateUuid();
-}
+std::string makeRequestId() { return UuidUtils::generateUuid(); }
 
-}
-
-inline std::string JsonToString(const rapidjson::Document& doc) {
+inline std::string JsonToString(const rapidjson::Document &doc) {
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     doc.Accept(writer);
     return buffer.GetString();
 }
 
+// Some servers return serviceInfo as either string or object. Normalize
+// any JSON value to string form.
+inline std::string AnyJsonToString(const rapidjson::Value &val) {
+    if (val.IsString()) {
+        return val.GetString();
+    }
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+    val.Accept(writer);
+    return buffer.GetString();
+}
+
+} // anonymous namespace
+
 struct GrpcNamingServiceListener::GrpcState {
     std::shared_ptr<grpc::Channel> channel;
     std::unique_ptr<::Request::Stub> requestStub;
     std::unique_ptr<::BiRequestStream::Stub> streamStub;
+
     std::unique_ptr<grpc::ClientContext> streamContext;
     std::unique_ptr<grpc::ClientReaderWriter<::Payload, ::Payload>> stream;
+
     std::mutex streamMutex;
     std::mutex unaryMutex;
+
     std::string currentServer;
     std::string connectionId;
 };
 
 GrpcNamingServiceListener::GrpcNamingServiceListener(ObjectConfigData *objectConfigData)
-        : _objectConfigData(objectConfigData), running(false), connectionReady(false) {
+    : _objectConfigData(objectConfigData), running(false), connectionReady(false) {
     state = new GrpcState();
 }
 
@@ -121,21 +138,27 @@ void GrpcNamingServiceListener::run() {
             std::this_thread::sleep_for(std::chrono::milliseconds(RECONNECT_DELAY_MS));
             continue;
         }
+
         connectionReady.store(true);
         resubscribeAll();
 
         while (running.load()) {
             ::Payload inbound;
+            // Read without holding the stream mutex to avoid blocking writers
+            std::unique_ptr<grpc::ClientReaderWriter<::Payload, ::Payload>> *streamPtr = nullptr;
             {
                 std::lock_guard<std::mutex> lock(state->streamMutex);
                 if (!state->stream) {
                     break;
                 }
-                if (!state->stream->Read(&inbound)) {
-                    log_warn("[gRPC] stream closed from server %s\n", state->currentServer.c_str());
-                    break;
-                }
+                streamPtr = &state->stream;
             }
+
+            if (!(*streamPtr)->Read(&inbound)) {
+                log_warn("[gRPC] stream closed from server %s\n", state->currentServer.c_str());
+                break;
+            }
+
             handlePayload(inbound);
         }
 
@@ -184,7 +207,7 @@ bool GrpcNamingServiceListener::establishConnection() {
         std::string address = oss.str();
 
         if (useTls) {
-            log_warn("[gRPC] TLS is not configured, using insecure channel for %s\n", address.c_str());
+            log_warn("[gRPC] TLS not configured; falling back to insecure channel for %s\n", address.c_str());
         }
 
         log_info("[gRPC] dialing %s\n", address.c_str());
@@ -242,16 +265,6 @@ void GrpcNamingServiceListener::resubscribeAll() {
 }
 
 bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &key, bool subscribeFlag) {
-    // std::ostringstream body;
-    // body << "{\"requestId\":\"" << makeRequestId() << "\",";
-    // body << "\"module\":\"naming\",";
-    // body << "\"namespace\":\"" << _objectConfigData->_serverListManager->getNamespace() << "\",";
-    // body << "\"serviceName\":\"" << key.serviceName << "\",";
-    // body << "\"groupName\":\"" << key.groupName << "\",";
-    // body << "\"clusters\":\"" << key.clusters << "\",";
-    // body << "\"subscribe\":" << (subscribeFlag ? "true" : "false") << "}";
-    //以上代码改为rapidjson
-    log_warn("ivvyjxj111 clusters:%s\n", key.clusters.c_str());
     rapidjson::Document request_doc;
     request_doc.SetObject();
     rapidjson::Document::AllocatorType &allocator = request_doc.GetAllocator();
@@ -264,13 +277,10 @@ bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &
 
     const std::string requestId = makeRequestId();
     addStringMember("requestId", requestId.c_str(), requestId.size());
-
     const char moduleValue[] = "naming";
     addStringMember("module", moduleValue, sizeof(moduleValue) - 1);
 
-    const NacosString tenantNamespace = "public";
-    // const NacosString tenantNamespace = _objectConfigData->_serverListManager->getNamespace();
-    log_warn("ivvyjxj111 namespace:%s\n", tenantNamespace.c_str());
+    const NacosString tenantNamespace = _objectConfigData->_serverListManager->getNamespace();
     addStringMember("namespace", tenantNamespace.c_str(), tenantNamespace.size());
     addStringMember("serviceName", key.serviceName.c_str(), key.serviceName.size());
     addStringMember("groupName", key.groupName.c_str(), key.groupName.size());
@@ -283,25 +293,17 @@ bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &
     }
     log_debug("[gRPC] subscribe response: %s\n", response.c_str());
 
+    // If subscribe=true succeeds, a serviceInfo may be returned; apply it and fetch snapshot
     rapidjson::Document doc;
     doc.Parse(response.c_str());
-    if (subscribeFlag && doc.IsObject() && doc.HasMember("success") && doc["success"].IsBool() && doc["success"].GetBool()) {
-        std::string serviceInfoJson;
-        if (doc.HasMember("serviceInfo")) {
-            const rapidjson::Value &svc = doc["serviceInfo"];
-            if (svc.IsString()) {
-                serviceInfoJson = svc.GetString();
-            } else {
-                rapidjson::StringBuffer buffer;
-                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-                svc.Accept(writer);
-                serviceInfoJson = buffer.GetString();
+    if (subscribeFlag && doc.IsObject()) {
+        bool ok = (doc.HasMember("success") && doc["success"].IsBool() && doc["success"].GetBool());
+        if (ok) {
+            if (doc.HasMember("serviceInfo")) {
+                processServiceInfoJson(AnyJsonToString(doc["serviceInfo"]));
             }
+            fetchServiceSnapshot(key.serviceName, key.groupName, key.clusters);
         }
-        if (!serviceInfoJson.empty()) {
-            processServiceInfoJson(serviceInfoJson);
-        }
-        fetchServiceSnapshot(key.serviceName, key.groupName, key.clusters);
     }
     return true;
 }
@@ -373,8 +375,8 @@ bool GrpcNamingServiceListener::sendConnectionSetup(const std::string &connectio
     return ok;
 }
 
-
-void GrpcNamingServiceListener::fetchServiceSnapshot(const NacosString &serviceName, const NacosString &groupName, const NacosString &clusters) {
+void GrpcNamingServiceListener::fetchServiceSnapshot(const NacosString &serviceName, const NacosString &groupName,
+                                                     const NacosString &clusters) {
     std::ostringstream body;
     body << "{\"requestId\":\"" << makeRequestId() << "\",";
     body << "\"module\":\"naming\",";
@@ -386,32 +388,20 @@ void GrpcNamingServiceListener::fetchServiceSnapshot(const NacosString &serviceN
 
     std::string response;
     if (!callUnary("ServiceQueryRequest", body.str(), response)) {
-        log_warn("[gRPC] service query request failed");
+        log_warn("[gRPC] service query request failed\n");
         return;
     }
 
-    log_debug("[gRPC] service query response: %s", response.c_str());
+    log_debug("[gRPC] service query response: %s\n", response.c_str());
     rapidjson::Document doc;
     doc.Parse(response.c_str());
     if (!doc.IsObject() || !doc.HasMember("success") || !doc["success"].IsBool() || !doc["success"].GetBool()) {
-        log_warn("[gRPC] service query failed: %s", response.c_str());
+        log_warn("[gRPC] service query failed: %s\n", response.c_str());
         return;
     }
 
     if (doc.HasMember("serviceInfo")) {
-        std::string snapshotJson;
-        const rapidjson::Value &svc = doc["serviceInfo"];
-        if (svc.IsString()) {
-            snapshotJson = svc.GetString();
-        } else {
-            rapidjson::StringBuffer buffer;
-            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-            svc.Accept(writer);
-            snapshotJson = buffer.GetString();
-        }
-        if (!snapshotJson.empty()) {
-            processServiceInfoJson(snapshotJson);
-        }
+        processServiceInfoJson(AnyJsonToString(doc["serviceInfo"]));
     }
 }
 
@@ -420,10 +410,10 @@ void GrpcNamingServiceListener::processServiceInfoJson(const std::string &servic
         return;
     }
     try {
-        log_debug("[gRPC] apply service info: %s", serviceInfoJson.c_str());
+        log_debug("[gRPC] apply service info: %s\n", serviceInfoJson.c_str());
         _objectConfigData->_hostReactor->processServiceJson(serviceInfoJson.c_str());
     } catch (NacosException &e) {
-        log_warn("[gRPC] processServiceJson failed: %s", e.what());
+        log_warn("[gRPC] processServiceJson failed: %s\n", e.what());
     }
 }
 
@@ -442,25 +432,8 @@ void GrpcNamingServiceListener::handlePayload(const ::Payload &payload) {
             requestId = doc["requestId"].GetString();
         }
 
-        std::string serviceInfoJson;
         if (doc.IsObject() && doc.HasMember("serviceInfo")) {
-            const rapidjson::Value &svc = doc["serviceInfo"];
-            if (svc.IsString()) {
-                serviceInfoJson = svc.GetString();
-            } else {
-                rapidjson::StringBuffer buffer;
-                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-                svc.Accept(writer);
-                serviceInfoJson = buffer.GetString();
-            }
-        }
-
-        if (!serviceInfoJson.empty()) {
-            try {
-                _objectConfigData->_hostReactor->processServiceJson(serviceInfoJson.c_str());
-            } catch (NacosException &e) {
-                log_warn("[gRPC] processServiceJson failed: %s\n", e.what());
-            }
+            processServiceInfoJson(AnyJsonToString(doc["serviceInfo"]));
         } else {
             log_warn("[gRPC] NotifySubscriberRequest missing serviceInfo payload\n");
         }
@@ -483,6 +456,7 @@ void GrpcNamingServiceListener::handlePayload(const ::Payload &payload) {
         ack << "{\"resultCode\":200,\"errorCode\":0,\"success\":true,\"message\":\"\",\"requestId\":\""
             << requestId << "\"}";
         sendStreamAck("ClientDetectionResponse", ack.str());
+        return;
     }
 }
 
