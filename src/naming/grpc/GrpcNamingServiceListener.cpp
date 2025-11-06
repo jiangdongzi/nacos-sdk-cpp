@@ -35,6 +35,13 @@ std::string makeRequestId() {
 
 }
 
+inline std::string JsonToString(const rapidjson::Document& doc) {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+    doc.Accept(writer);
+    return buffer.GetString();
+}
+
 struct GrpcNamingServiceListener::GrpcState {
     std::shared_ptr<grpc::Channel> channel;
     std::unique_ptr<::Request::Stub> requestStub;
@@ -234,17 +241,29 @@ void GrpcNamingServiceListener::resubscribeAll() {
 }
 
 bool GrpcNamingServiceListener::sendSubscribeRequest(const GrpcSubscriptionKey &key, bool subscribeFlag) {
-    std::ostringstream body;
-    body << "{\"requestId\":\"" << makeRequestId() << "\",";
-    body << "\"module\":\"naming\",";
-    body << "\"namespace\":\"" << _objectConfigData->_serverListManager->getNamespace() << "\",";
-    body << "\"serviceName\":\"" << key.serviceName << "\",";
-    body << "\"groupName\":\"" << key.groupName << "\",";
-    body << "\"clusters\":\"" << key.clusters << "\",";
-    body << "\"subscribe\":" << (subscribeFlag ? "true" : "false") << "}";
+    // std::ostringstream body;
+    // body << "{\"requestId\":\"" << makeRequestId() << "\",";
+    // body << "\"module\":\"naming\",";
+    // body << "\"namespace\":\"" << _objectConfigData->_serverListManager->getNamespace() << "\",";
+    // body << "\"serviceName\":\"" << key.serviceName << "\",";
+    // body << "\"groupName\":\"" << key.groupName << "\",";
+    // body << "\"clusters\":\"" << key.clusters << "\",";
+    // body << "\"subscribe\":" << (subscribeFlag ? "true" : "false") << "}";
+    //以上代码改为rapidjson
+    rapidjson::Document request_doc;
+    request_doc.SetObject();
+    rapidjson::Document::AllocatorType& allocator = request_doc.GetAllocator();
+
+    request_doc.AddMember("requestId", makeRequestId(), allocator);
+    request_doc.AddMember("module", "naming", allocator);
+    request_doc.AddMember("namespace", _objectConfigData->_serverListManager->getNamespace(), allocator);
+    request_doc.AddMember("serviceName", key.serviceName, allocator);
+    request_doc.AddMember("groupName", key.groupName, allocator);
+    request_doc.AddMember("clusters", key.clusters, allocator);
+    request_doc.AddMember("subscribe", subscribeFlag, allocator);
 
     std::string response;
-    if (!callUnary("SubscribeServiceRequest", body.str(), response)) {
+    if (!callUnary("SubscribeServiceRequest", JsonToString(request_doc), response)) {
         return false;
     }
     log_debug("[gRPC] subscribe response: %s\n", response.c_str());
