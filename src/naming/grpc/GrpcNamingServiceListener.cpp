@@ -684,6 +684,8 @@ bool GrpcNamingServiceListener::sendHealthCheck() {
     body << "{\"requestId\":\"" << makeRequestId() << "\",\"module\":\"internal\"}";
     std::string response;
     bool ok = callUnaryWithTimeout("HealthCheckRequest", body.str(), response, healthTimeoutMs);
+    //log response
+    log_info("[gRPC] health check response: %s\n", response.c_str());
     if (!ok) {
         log_warn("[gRPC] health check unary failed\n");
         return false;
