@@ -399,7 +399,7 @@ bool GrpcNamingServiceListener::sendConnectionSetup(const std::string &connectio
     NacosString tenant = effectiveNamespace(_objectConfigData);
 
     std::ostringstream labels;
-    labels << "{\"module\":\"naming\"}";
+    labels << "{\"module\":\"naming\",\"source\":\"sdk\"}";
 
     std::ostringstream body;
     body << "{\"requestId\":\"" << makeRequestId() << "\",";
