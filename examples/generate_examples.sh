@@ -7,3 +7,4 @@ g++ -I/usr/local/include/nacos/ listenToKeys.cpp -lnacos-cli -o listenToKeys.out
 g++ -I/usr/local/include/nacos/ registerInstances.cpp -lnacos-cli -o registerInstances.out
 g++ -I/usr/local/include/nacos/ setConfig.cpp -lnacos-cli -o setConfig.out
 g++ -I/usr/local/include/nacos/ subscribeServices.cpp -lnacos-cli -o subscribeServices.out
+g++ -std=c++11 -I/usr/local/include/nacos/ discovery_register_demo.cpp -lnacos-cli -o discovery_register_demo.out
