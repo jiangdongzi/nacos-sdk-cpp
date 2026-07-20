@@ -82,7 +82,7 @@ void SecurityManager::login() NACOS_THROW (NacosException) {
     throw NacosException(NacosException::ALL_SERVERS_TRIED_AND_FAILED, "Login failed after all servers are tried");
 }
 
-NacosString &SecurityManager::getAccessToken() {
+NacosString SecurityManager::getAccessToken() {
     ReadGuard _readGuard(_rwLock);
     return _accessToken.accessToken;
 }

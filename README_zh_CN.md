@@ -37,6 +37,28 @@ make
 `EventListener::receiveNamingInfo` 回调，原有的 HTTP 轮询仍作为兜底。
 只需在编译环境中安装 gRPC/protobuf，运行时便会自动维护该连接。
 
+### gRPC 配置监听
+
+`ConfigService::addListener` 默认使用 Nacos 2.x 及以上版本的 gRPC 配置协议：
+客户端通过 `ConfigBatchListenRequest` 注册 MD5，接收
+`ConfigChangeNotifyRequest` 推送，再使用 `ConfigQueryRequest` 拉取最新内容。
+断线重连后会自动重新注册全部监听项。运行
+`./grpc-config-listen.out [dataId] [serverAddr]` 可验证该链路；如需连接只支持旧协议的
+Nacos，可设置 `config.grpc.enabled=false` 恢复 HTTP 长轮询。
+
+手动测试时，先启动监听器，再在另一个终端发布随机配置：
+
+```bash
+# 终端 1
+./build/grpc-config-listen.out grpc-config-listen-test 127.0.0.1:8848
+
+# 终端 2
+./scripts/publish_random_config.sh
+```
+
+终端 1 应显示 `CONFIG_UPDATE_RECEIVED=<随机内容>`，SDK 详细日志位于
+`./logs/nacos-sdk-cpp.log`。
+
 ## 将libnacos-cli集成到你的工程
 
 下面的例子说明了如何将库文件(.so) 集成到你的工程:

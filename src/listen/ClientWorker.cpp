@@ -419,6 +419,61 @@ void ClientWorker::performWatch() {
     pthread_mutex_unlock(&watchListMutex);
 }
 
+void ClientWorker::applyGrpcConfigChange(const NacosString &dataId,
+                                         const NacosString &group,
+                                         const NacosString &tenant,
+                                         const NacosString &content,
+                                         const NacosString &md5,
+                                         bool exists,
+                                         bool notifyListeners) {
+    const NacosString key = GroupKey::getKeyTenant(dataId, group, tenant);
+    std::vector<Listener *> listeners;
+    bool changed = false;
+    bool found = false;
+
+    pthread_mutex_lock(&watchListMutex);
+    std::map<NacosString, ListeningData *>::iterator it = listeningKeys.find(key);
+    if (it != listeningKeys.end()) {
+        found = true;
+        ListeningData *listeningData = it->second;
+        const NacosString newMd5 = exists ? md5 : "";
+        changed = listeningData->getMD5() != newMd5;
+        listeningData->setMD5(newMd5);
+
+        if (changed && notifyListeners) {
+            const std::map<Listener *, char> *listenerList = listeningData->getListenerList();
+            for (std::map<Listener *, char>::const_iterator listenerIt = listenerList->begin();
+                 listenerIt != listenerList->end(); ++listenerIt) {
+                listenerIt->first->incRef();
+                listeners.push_back(listenerIt->first);
+            }
+        }
+    }
+    pthread_mutex_unlock(&watchListMutex);
+
+    if (!found) {
+        return;
+    }
+
+    _objectConfigData->_localSnapshotManager->saveSnapshot(
+        _objectConfigData->_appConfigManager->get(PropertyKeyConst::CLIENT_NAME), dataId, group, tenant,
+        exists ? content : NULLSTR);
+
+    for (std::vector<Listener *>::iterator listenerIt = listeners.begin(); listenerIt != listeners.end();
+         ++listenerIt) {
+        Listener *listener = *listenerIt;
+        listener->receiveConfigInfo(exists ? content : NULLSTR);
+        if (listener->decRef() == 0) {
+            delete listener;
+        }
+    }
+
+    if (changed) {
+        log_info("[ClientWorker]-applyGrpcConfigChange:updated dataId=%s group=%s tenant=%s md5=%s\n",
+                 dataId.c_str(), group.c_str(), tenant.c_str(), exists ? md5.c_str() : "");
+    }
+}
+
 /**
 * Removes listeners in deleteList
 *

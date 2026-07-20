@@ -50,3 +50,5 @@ cmake-build-debug
 
 
 .vscode/
+build
+logs

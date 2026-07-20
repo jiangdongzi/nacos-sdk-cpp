@@ -6,6 +6,7 @@
 #include "src/naming/subscribe/SubscriptionPoller.h"
 #include "src/naming/subscribe/UdpNamingServiceListener.h"
 #include "naming/grpc/GrpcNamingServiceListener.h"
+#include "config/grpc/GrpcConfigServiceListener.h"
 #include "src/naming/subscribe/HostReactor.h"
 #include "src/listen/ClientWorker.h"
 #include "src/security/SecurityManager.h"
@@ -32,6 +33,7 @@ ObjectConfigData::ObjectConfigData(FactoryType theFactoryType) {
     _securityManager = NULL;
     _configProxy = NULL;
     _grpcNamingServiceListener = NULL;
+    _grpcConfigServiceListener = NULL;
 }
 
 void ObjectConfigData::checkNamingService() NACOS_THROW(NacosException) {
@@ -65,6 +67,7 @@ void ObjectConfigData::checkConfigService() NACOS_THROW(NacosException) {
     NACOS_ASSERT(_clientWorker != NULL);
     NACOS_ASSERT(_localSnapshotManager != NULL);
     NACOS_ASSERT(_configProxy != NULL);
+    NACOS_ASSERT(_grpcConfigServiceListener != NULL);
 }
 
 void ObjectConfigData::checkMaintainService() NACOS_THROW(NacosException) {
@@ -81,6 +84,10 @@ void ObjectConfigData::checkMaintainService() NACOS_THROW(NacosException) {
 
 void ObjectConfigData::destroyConfigService() {
 
+    if (_grpcConfigServiceListener != NULL) {
+        _grpcConfigServiceListener->stop();
+    }
+
     if (_clientWorker != NULL) {
         _clientWorker->stopListening();
     }
@@ -91,6 +98,11 @@ void ObjectConfigData::destroyConfigService() {
 
     if (_serverListManager) {
         _serverListManager->stop();
+    }
+
+    if (_grpcConfigServiceListener != NULL) {
+        delete _grpcConfigServiceListener;
+        _grpcConfigServiceListener = NULL;
     }
 
     if (_clientWorker != NULL) {

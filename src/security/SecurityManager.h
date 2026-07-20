@@ -40,7 +40,7 @@ public:
     SecurityManager(ObjectConfigData *objectConfigData);
     ~SecurityManager();
     void login() NACOS_THROW (NacosException);
-    NacosString &getAccessToken();
+    NacosString getAccessToken();
     void addAccessToken2Req(std::list<NacosString> &parameter);
     void start();
     void stop();

@@ -72,6 +72,8 @@ public:
     static const NacosString GRPC_KEEPALIVE_INTERVAL;
     // gRPC health check timeout (milliseconds)
     static const NacosString GRPC_HEALTHCHECK_TIMEOUT;
+    // Use Nacos 2.x+ gRPC protocol for configuration listeners.
+    static const NacosString CONFIG_GRPC_ENABLED;
 
     /*public static class SystemEnv {
 
