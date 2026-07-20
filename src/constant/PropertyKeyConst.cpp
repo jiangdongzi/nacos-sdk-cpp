@@ -61,4 +61,5 @@ const NacosString PropertyKeyConst::INSTANCE_ID_PREFIX = "nacos.instId.prefix";
 
 const NacosString PropertyKeyConst::GRPC_KEEPALIVE_INTERVAL = "naming.grpc.keepalive.interval";
 const NacosString PropertyKeyConst::GRPC_HEALTHCHECK_TIMEOUT = "naming.grpc.health.timeout";
+const NacosString PropertyKeyConst::CONFIG_GRPC_ENABLED = "config.grpc.enabled";
 }//namespace nacos

@@ -45,6 +45,30 @@ poller remains as a fallback. No additional configuration is required—simply
 build the project with gRPC/protobuf installed and the runtime will handle the
 stream lifecycle for you.
 
+### gRPC configuration listeners
+
+`ConfigService::addListener` uses the Nacos 2.x+ gRPC configuration protocol by
+default. It registers content MD5 values with `ConfigBatchListenRequest`,
+handles server-side `ConfigChangeNotifyRequest` pushes, and fetches changed
+content with `ConfigQueryRequest`. All listeners are registered again after a
+reconnection. Run `./grpc-config-listen.out [dataId] [serverAddr]` to exercise
+this path. Set `config.grpc.enabled=false` when connecting to a legacy server
+that only supports HTTP long polling.
+
+For a manual test, start the listener and publish a random value from another
+terminal:
+
+```bash
+# Terminal 1
+./build/grpc-config-listen.out grpc-config-listen-test 127.0.0.1:8848
+
+# Terminal 2
+./scripts/publish_random_config.sh
+```
+
+Terminal 1 should print `CONFIG_UPDATE_RECEIVED=<random content>`. Detailed SDK
+logs are written to `./logs/nacos-sdk-cpp.log`.
+
 ## Integrate the library into your project
 
 Here is an example showing how to integrate the library(.so) into your project:

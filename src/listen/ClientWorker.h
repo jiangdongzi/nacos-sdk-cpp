@@ -87,6 +87,14 @@ public:
                                 long timeoutMs) NACOS_THROW(NacosException);
     HttpResult getServerConfigHelper(const NacosString &tenant, const NacosString &dataId, const NacosString &group,
                                 long timeoutMs) NACOS_THROW(NacosException);
+
+    void applyGrpcConfigChange(const NacosString &dataId,
+                               const NacosString &group,
+                               const NacosString &tenant,
+                               const NacosString &content,
+                               const NacosString &md5,
+                               bool exists,
+                               bool notifyListeners);
 };
 }//namespace nacos
 

@@ -115,6 +115,7 @@ void AppConfigManager::initDefaults() {
     set(PropertyKeyConst::CLIENT_NAME, "default");
     set(PropertyKeyConst::LOCAL_IP, NetUtils::getHostIp());
     set(PropertyKeyConst::UDP_RECEIVER_PORT, "30620");
+    set(PropertyKeyConst::CONFIG_GRPC_ENABLED, "true");
 
     NacosString appName = getAppNameFromEnv();
     if (!NacosStringOps::isNullStr(appName)) {

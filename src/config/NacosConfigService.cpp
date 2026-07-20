@@ -3,10 +3,19 @@
 #include "src/log/Logger.h"
 #include "ConfigProxy.h"
 #include "src/utils/ParamUtils.h"
+#include "config/grpc/GrpcConfigServiceListener.h"
 
 using namespace std;
 
 namespace nacos{
+namespace {
+bool grpcConfigEnabled(ObjectConfigData *objectConfigData) {
+    const NacosString value =
+        ParamUtils::toLower(objectConfigData->_appConfigManager->get(PropertyKeyConst::CONFIG_GRPC_ENABLED));
+    return value != "false" && value != "0" && value != "no";
+}
+}
+
 NacosConfigService::NacosConfigService(ObjectConfigData *objectConfigData) NACOS_THROW(NacosException) {
     _objectConfigData = objectConfigData;
     if (_objectConfigData->_appConfigManager->nacosAuthEnabled()) {
@@ -220,7 +229,13 @@ void NacosConfigService::addListener
     }
 
     _objectConfigData->_clientWorker->addListener(dataId, parmgroup, getNamespace(), cfgcontent, listener);
-    _objectConfigData->_clientWorker->startListening();
+    if (grpcConfigEnabled(_objectConfigData)) {
+        _objectConfigData->_grpcConfigServiceListener->addListener(
+            dataId, parmgroup, getNamespace(), cfgcontent, listener);
+        _objectConfigData->_grpcConfigServiceListener->start();
+    } else {
+        _objectConfigData->_clientWorker->startListening();
+    }
 }
 
 void NacosConfigService::removeListener
@@ -234,7 +249,14 @@ void NacosConfigService::removeListener
         parmgroup = group;
     }
     log_debug("[NacosConfigService]-removeListener: calling client worker\n");
-    _objectConfigData->_clientWorker->removeListener(dataId, parmgroup, getNamespace(), listener);
+    if (grpcConfigEnabled(_objectConfigData)) {
+        _objectConfigData->_grpcConfigServiceListener->removeListener(
+            dataId, parmgroup, getNamespace(), listener);
+        _objectConfigData->_clientWorker->removeListenerActively(
+            dataId, parmgroup, getNamespace(), listener);
+    } else {
+        _objectConfigData->_clientWorker->removeListener(dataId, parmgroup, getNamespace(), listener);
+    }
 }
 
 }//namespace nacos

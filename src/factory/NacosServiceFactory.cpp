@@ -17,6 +17,7 @@
 #include "src/naming/subscribe/SubscriptionPoller.h"
 #include "src/naming/subscribe/UdpNamingServiceListener.h"
 #include "naming/grpc/GrpcNamingServiceListener.h"
+#include "config/grpc/GrpcConfigServiceListener.h"
 #include "src/naming/subscribe/HostReactor.h"
 #include "src/security/SecurityManager.h"
 #include "src/utils/ConfigParserUtils.h"
@@ -159,6 +160,10 @@ ConfigService *NacosServiceFactory::CreateConfigService() NACOS_THROW(NacosExcep
     objectConfigData->_localSnapshotManager = localSnapshotManager;
     ClientWorker *clientWorker = new ClientWorker(objectConfigData);
     objectConfigData->_clientWorker = clientWorker;
+
+    GrpcConfigServiceListener *grpcConfigServiceListener =
+        new GrpcConfigServiceListener(objectConfigData);
+    objectConfigData->_grpcConfigServiceListener = grpcConfigServiceListener;
     objectConfigData->checkAssembledObject();
 
     ConfigService *instance = new NacosConfigService(objectConfigData);
