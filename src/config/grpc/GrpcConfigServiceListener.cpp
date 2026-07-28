@@ -462,7 +462,9 @@ bool GrpcConfigServiceListener::sendBatchListen(const std::vector<ListenSnapshot
             markSnapshotClean(*it);
             continue;
         }
-        if (processChanges && refreshConfig(it->key, it->generation, !isInitializing(it->key))) {
+        // Always allow listener notification when content actually changes. addListener
+        // already fires one initial callback; applyGrpcConfigChange skips duplicates by MD5.
+        if (processChanges && refreshConfig(it->key, it->generation, true)) {
             refreshed = true;
         }
     }

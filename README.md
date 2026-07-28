@@ -51,7 +51,9 @@ stream lifecycle for you.
 default. It registers content MD5 values with `ConfigBatchListenRequest`,
 handles server-side `ConfigChangeNotifyRequest` pushes, and fetches changed
 content with `ConfigQueryRequest`. All listeners are registered again after a
-reconnection. Run `./grpc-config-listen.out [dataId] [serverAddr]` to exercise
+reconnection. Registering a listener immediately invokes `receiveConfigInfo`
+once with the current value (empty when missing); later changes reuse the same
+callback. Run `./grpc-config-listen.out [dataId] [serverAddr]` to exercise
 this path. Set `config.grpc.enabled=false` when connecting to a legacy server
 that only supports HTTP long polling.
 

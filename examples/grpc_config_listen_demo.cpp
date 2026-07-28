@@ -4,6 +4,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "Nacos.h"
 #include "constant/ConfigConstant.h"
@@ -71,6 +72,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    std::this_thread::sleep_for(std::chrono::seconds(100));
     configService->removeListener(dataId, ConfigConstant::DEFAULT_GROUP, listener);
     return 0;
 }

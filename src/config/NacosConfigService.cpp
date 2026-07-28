@@ -236,6 +236,13 @@ void NacosConfigService::addListener
     } else {
         _objectConfigData->_clientWorker->startListening();
     }
+
+    // Notify once with the current snapshot so business code can reuse receiveConfigInfo
+    // for both initial load and subsequent changes. Later gRPC/HTTP sync still skips
+    // the initializing notify to avoid a duplicate callback for the same content.
+    log_info("[NacosConfigService]-addListener:initial callback dataId=%s group=%s\n",
+             dataId.c_str(), parmgroup.c_str());
+    listener->receiveConfigInfo(cfgcontent);
 }
 
 void NacosConfigService::removeListener
