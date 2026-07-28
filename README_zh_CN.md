@@ -42,8 +42,9 @@ make
 `ConfigService::addListener` 默认使用 Nacos 2.x 及以上版本的 gRPC 配置协议：
 客户端通过 `ConfigBatchListenRequest` 注册 MD5，接收
 `ConfigChangeNotifyRequest` 推送，再使用 `ConfigQueryRequest` 拉取最新内容。
-断线重连后会自动重新注册全部监听项。运行
-`./grpc-config-listen.out [dataId] [serverAddr]` 可验证该链路；如需连接只支持旧协议的
+断线重连后会自动重新注册全部监听项。注册监听后会立刻回调一次
+`receiveConfigInfo`（当前配置内容；不存在则为空），后续变更继续走同一回调。
+运行 `./grpc-config-listen.out [dataId] [serverAddr]` 可验证该链路；如需连接只支持旧协议的
 Nacos，可设置 `config.grpc.enabled=false` 恢复 HTTP 长轮询。
 
 手动测试时，先启动监听器，再在另一个终端发布随机配置：
